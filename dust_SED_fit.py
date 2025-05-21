@@ -13,12 +13,22 @@ script_path = os.path.dirname(os.path.realpath(__file__))
 #######These are lifted from the plots in Fox+2010. Has several grain sizes, but only out to ~15 micron.m
 q_si = asci.read(script_path+'/dust_data/dust_emission_efficiency_fox2010/q_silicate.csv', data_start = 2, delimiter = ',')
 q_c =  asci.read(script_path+'/dust_data/dust_emission_efficiency_fox2010/q_graphite.csv', data_start = 2, delimiter = ',')
+q_c.sort('col5')
 
 #######These are from Draine (add citations here, but they are in Tinyanont+2019b, the 2017eaw paper.) 
 d_q_si = asci.read(script_path+'/dust_data/draine_dust_properties/sil_1e-1micron.dat')
 d_q_c  = asci.read(script_path+'/dust_data/draine_dust_properties/gra_1e-1micron.dat')
 
-q_c.sort('col5')
+####### Q - These OpTool DHS  - MgFeSiO4, hollow sphere, radius 0.1 micron. #https://github.com/cdominik/optool
+op_q_si = asci.read(script_path+'/dust_data/other_silicate_dust_properties/OpTool_DHS_MgFeSiO4.dat')
+
+####### Kappa - Dorschner 1995 - MgFeSiO4, CDE shape, power law grain distribution 0.05-0.15 micron. 
+dor_kap_si = asci.read(script_path+'/dust_data/other_silicate_dust_properties/Dorchner_1995_CDE_MgFeSiO4.dat')
+
+####### Kappa - Drain Lee 2007 - 0.01 micron, 0.1 and 1 micron. 0.01 and 0.1 seem identical. 
+dl_kap_si = asci.read(script_path+'/dust_data/other_silicate_dust_properties/Draine_Li_2007_Silicate.dat')
+
+
 
 #Define some constants in cgs
 h = 6.6260755e-27
@@ -59,6 +69,7 @@ def get_Q(comp = 'C', size = 0.1):
     #Interpolate the table
     int_Q = interp1d(wl, Q, bounds_error = False)
     return int_Q
+
 
 # F = M B_nu kappa/d^2
 
@@ -104,11 +115,92 @@ def draine_kappa(wl, comp):
     elif comp == 'Si':
         dQ = d_q_si
         rho = 3
-    int_dQ = interp1d(dQ['w(micron)'], dQ['Q_abs'], bounds_error = False)
+    #int_dQ = interp1d(dQ['w(micron)'], dQ['Q_abs'], bounds_error = False)
+    int_dQ = interp1d(dQ['w(micron)'], dQ['Q_abs'], bounds_error = False, kind='cubic')
 #     rho = 2.5
     a_cgs = 0.1e-4
     return (3/(4*np.pi*rho*a_cgs**3))*(np.pi*a_cgs**2*int_dQ(wl))
-    
+
+
+def dorschner_kappa(wl, comp='Si'): #caution, carbon in this model for now is draine 0.1 micron
+
+    """get kappa from Dorschner dust MgFeSiO4. Power law grain distribution 0.05-0.15 micron centered at 0.1. rho = 3.20
+    Inputs:
+        wl: wavelength in micron
+        comp: Only 'Si'
+    Output:
+        dust kappa in cgs
+    """
+    a_cgs = 0.1e-4
+
+    if comp == 'C':
+        dQ = d_q_c
+        rho = 2.2
+        int_dQ = interp1d(dQ['w(micron)'], dQ['Q_abs'], bounds_error = False, kind='cubic')
+        int_dkap = (3/(4*np.pi*rho*a_cgs**3))*(np.pi*a_cgs**2*int_dQ(wl))
+
+    elif comp == 'Si':
+        dkap = dor_kap_si
+        int_dkap = interp1d(dkap['col1'],dkap['col2'], bounds_error = False,kind="cubic",fill_value="extrapolate")(wl)
+
+    return (int_dkap)
+
+def drainelee_kappa(wl, comp='Si',size = 0.1): # caution, carbon in this model for now is draine 0.1 micron
+    """get kappa from Draine and Lee 2007 - 0.01 micron, 0.1 and 1 micron. 
+    Inputs:
+        wl: wavelength in micron
+        comp: Only 'Si'
+    Output:
+        dust kappa in cgs
+    """
+    a_cgs = 0.1e-4
+
+    if comp == 'Si':
+       dkap = dl_kap_si
+       if size == 0.01:
+          int_dkap = interp1d(dkap['col1'],ddkap['col2'], bounds_error = False,kind="cubic",fill_value="extrapolate")(wl)
+       if size == 0.1:
+          int_dkap = interp1d(dkap['col1'],dkap['col3'], bounds_error = False,kind="cubic",fill_value="extrapolate")(wl)
+       if size == 1:
+          int_dkap = interp1d(dkap['col1'],dkap['col4'], bounds_error = False,kind="cubic",fill_value="extrapolate")(wl)
+       else:
+           print("Only have data for 0.01, 0.1, and 1 micron grains")
+
+    if comp == 'C':
+        dQ = d_q_c
+        rho = 2.2
+        int_dQ = interp1d(dQ['w(micron)'], dQ['Q_abs'], bounds_error = False, kind='cubic')
+        int_dkap = (3/(4*np.pi*rho*a_cgs**3))*(np.pi*a_cgs**2*int_dQ(wl))
+
+
+    return (int_dkap)
+
+def optool_kappa(wl, comp='Si'): #caution, carbon in this model for now is draine 0.1 micron
+    """get kappa from opt tool Q MgFeSiO4, hollow sphere, radius 0.1 micron. rho= 2.14 
+    Inputs:
+        wl: wavelength in micron
+        comp: Only 'Si'
+    Output:
+        dust kappa in cgs
+    """
+    a_cgs = 0.1e-4
+
+    if comp == 'Si':
+        #the file says rho= 2.14 mm, but this makes kappa value comparison weird, so im fixing to 3.. need to check it with Tea
+        dQ = op_q_si
+        rho= 3
+        #rho=2.14
+        int_dQ = interp1d(dQ['col1'], dQ['col2'], bounds_error = False, kind='cubic')
+        int_dkap = (3/(4*np.pi*rho*a_cgs**3))*(np.pi*a_cgs**2*int_dQ(wl))
+
+    if comp == 'C':
+        dQ = d_q_c
+        rho = 2.2
+        int_dQ = interp1d(dQ['w(micron)'], dQ['Q_abs'], bounds_error = False, kind='cubic')
+        int_dkap = (3/(4*np.pi*rho*a_cgs**3))*(np.pi*a_cgs**2*int_dQ(wl))
+
+    return (int_dkap)
+
 
 def dust_flux(wl, T, mass, comp, a,distance, source = 'Draine'):
     """
@@ -125,6 +217,15 @@ def dust_flux(wl, T, mass, comp, a,distance, source = 'Draine'):
         kap = kappa(wl, comp, a)
     elif source == 'Draine':
         kap = draine_kappa(wl, comp)
+
+    # only works for silicates for the time being
+    elif source == 'DraineLee07':
+        kap = drainelee_kappa(wl, comp, a) # 0.01, 0.1, 1
+    elif source == 'Dorschner':
+        kap = dorschner_kappa(wl, comp)
+    elif source == 'Optool':
+        kap = optool_kappa(wl, comp)
+ 
     mass_cgs = mass*1.99e33 #g/solar mass
     
     return mass_cgs*B_nu(nu,T)*kap/distance**2 #cgs
@@ -146,7 +247,14 @@ def dust_flux_nu(nu, T, mass, comp, a, distance, source = 'Draine'):
         kap = kappa(wl, comp, a)
     elif source == 'Draine':
         kap = draine_kappa(wl, comp)    
-        mass_cgs = mass*1.99e33 #g/solar mass
+    elif source == 'DraineLee07':
+        kap = drainelee_kappa(wl, 'Si', a)
+    elif source == 'Dorschner':
+        kap = dorschner_kappa(wl, 'Si')
+    elif source == 'Optool':
+        kap = optool_kappa(wl, 'Si')
+ 
+    mass_cgs = mass*1.99e33 #g/solar mass
     
     return mass_cgs*B_nu(nu,T)*kap/distance**2 #cgs
     
@@ -213,24 +321,12 @@ def SED_to_fit(wl, Ts, Ms, f_Sis, distance):
 
 ###############FIT Taking optical depth into account. Based on Shahbandeh+2023, but using emcee#
 
-# def p_esc(tau): #SO SLOW
-#     "eq 3 in the paper"
-#     p = 3/(4*tau) * (1 - 1/(2*tau**2) + (1/tau + 1/(2*tau**2))*np.exp(-2*tau) )
-#     for i in range(len(p)):
-#         if np.isnan(p[i]): 
-#             p[i] = 0
-#     #Weird numerical factor
-#     for i in range(len(p)):
-#         if tau[i] < 1e-4:
-#             p[i] = 1
-#     return p
-
 def p_esc(tau):
     "eq 3 in the paper"
-    p = 3/(4*tau) * (1 - 1/(2*tau**2) + (1/tau + 1/(2*tau**2))*np.exp(-2*tau) )
-    p = np.nan_to_num(p, nan = 0)
-    p[tau < 1e-4] = 1
-    p[tau > 1000] = 0
+    p = 3/(4*tau) * (1-1/(2*tau**2)+ (1/tau + 1/(2*tau**2))*np.exp(-2*tau) )
+    for i in range(len(p)):
+        if np.isnan(p[i]): 
+            p[i] = 0
     return p
 
 def tau(wl, t, Mdust_tot, v_ej, comp = 'C'):
@@ -243,9 +339,7 @@ def tau(wl, t, Mdust_tot, v_ej, comp = 'C'):
     opt_depth = 3/4 * (Mdust_tot/(np.pi * v_ej**2)) * draine_kappa(wl, comp)*(u.cm**2/u.g) * t**(-2)
     return opt_depth.to(1).value
 
-from matplotlib import pyplot as plt
-
-def SED_to_fit_opt_depth(wl, Ts, Ms, f_Sis, epoch, v_ej, distance, return_components = False):
+def SED_to_fit_opt_depth(wl, Ts, Ms, f_Sis, epoch, v_ej, distance):
     """Deal with multi component fit
     Ts, Ms, and f_Si are arrays of same length specify different 
     SED components.
@@ -254,8 +348,6 @@ def SED_to_fit_opt_depth(wl, Ts, Ms, f_Sis, epoch, v_ej, distance, return_compon
     M in solar mass
     """
     dust_models = []
-    #FIRST LOOP TO GET TOTAL OPTICAL DEPTH FROM ALL COMPONENTS
-    tau_tots = []
     if len(Ts) == len(Ms) == len(f_Sis):
         for ind in range(len(Ts)):
             T = Ts[ind]
@@ -263,45 +355,79 @@ def SED_to_fit_opt_depth(wl, Ts, Ms, f_Sis, epoch, v_ej, distance, return_compon
             f_Si = f_Sis[ind]
             Si_mass = f_Si*M
             C_mass =  (1-f_Si)*M
-            # print(C_mass, Si_mass)
             #Compute the optical depth
             # print(Si_mass, C_mass)
             tau_Si = tau(wl*u.micron, epoch*u.day, Si_mass*u.Msun, v_ej*u.km/u.s, comp = 'Si')
             tau_C =  tau(wl*u.micron, epoch*u.day, C_mass*u.Msun , v_ej*u.km/u.s, comp = 'C')
             # print(tau_Si, tau_C)
-            #TOTAL optical depth MAJOR UPDATE HERE.
-            tau_comp = tau_Si + tau_C
-            tau_tots += [tau_comp]
-        tau_total = np.sum(tau_tots, axis = 0)
-        p_esc_total = p_esc(tau_total)
-        # plt.plot(wl, tau_tots)
-        # plt.plot(wl, p_esc_total);plt.ylim([0,1]);plt.show()
-        # print(p_esc_total)
+            #Compute the escape fraction
+            p_esc_Si = p_esc(tau_Si)
+            p_esc_C  = p_esc(tau_C)
+            # print(p_esc_Si, p_esc_C)
+            #Now compute the observed flux
+            Si_dust = dust_flux(wl, T, Si_mass*p_esc_Si, 'Si',0.1, distance = distance)
+            C_dust =  dust_flux(wl, T,  C_mass*p_esc_C , 'C',0.1, distance  = distance)
+            dust_models += [Si_dust + C_dust]
+    else:
+        print("Length of Ts, Ms, and f_Si must be equal")
+    dust_models = np.array(dust_models)
+    total_dust_SED = np.sum(dust_models, axis = 0)
+    return 1e26*total_dust_SED
+
+
+def tau_r(wl, R, Mdust_tot, comp='C'):
+    """
+    The optical depth at different wavelengths as a function of radius,
+    assuming homologous expansion.
+
+    ALL INPUT MUST BE WITH ASTROPY UNIT
+    """
+    opt_depth = 3/4 * (Mdust_tot / (np.pi * R**2)) * draine_kappa(wl, comp) * (u.cm**2/u.g)
+    return opt_depth.to(1).value
+
+
+def SED_to_fit_opt_depth_freer(wl, Ts, Ms, f_Sis, distance, R, return_components=False):
+    """Deal with multi-component fit
+    Ts, Ms, and f_Si are arrays of the same length specifying different 
+    SED components.
+    distance is in cm. 
+    T in K
+    M in solar mass
+    R in cm (radius of the expanding shell)
+    return_components: if True, return total SED, Si_dust, and C_dust; 
+                      if False, return only total SED.
+    """
+    dust_models = []
+    if len(Ts) == len(Ms) == len(f_Sis):
         for ind in range(len(Ts)):
             T = Ts[ind]
             M = Ms[ind]
             f_Si = f_Sis[ind]
-            Si_mass = f_Si*M
-            C_mass =  (1-f_Si)*M
-            #Now compute the observed flux
-            Si_dust = dust_flux(wl, T, Si_mass*p_esc_total, 'Si',0.1, distance = distance)
-            C_dust =  dust_flux(wl, T,  C_mass*p_esc_total, 'C',0.1, distance  = distance)
+            Si_mass = f_Si * M
+            C_mass = (1 - f_Si) * M
+            # Compute the optical depth
+            tau_Si = tau_r(wl * u.micron, R * u.cm, Si_mass * u.Msun, comp='Si')
+            tau_C = tau_r(wl * u.micron, R * u.cm, C_mass * u.Msun, comp='C')
+            # Compute the escape fraction
+            p_esc_Si = p_esc(tau_Si)
+            p_esc_C = p_esc(tau_C)
+            # Now compute the observed flux
+            Si_dust = dust_flux(wl, T, Si_mass * p_esc_Si, 'Si', 0.1, distance=distance)
+            C_dust = dust_flux(wl, T, C_mass * p_esc_C, 'C', 0.1, distance=distance)
             dust_models += [Si_dust + C_dust]
     else:
         print("Length of Ts, Ms, and f_Si must be equal")
-
     dust_models = np.array(dust_models)
-    # print(dust_models.shape)
+    total_dust_SED = np.sum(dust_models, axis=0)
 
+    # Return based on the return_components flag
     if return_components:
-        return 1e26*dust_models
+        return 1e26 * total_dust_SED, Si_dust * 1e26, C_dust * 1e26
     else:
-        total_dust_SED = np.sum(dust_models, axis = 0)
-        return 1e26*total_dust_SED 
+        return 1e26 * total_dust_SED
 
-
-
-
+# It's pretty similar with some Ro^3 - Ri^3  somewhere
+# escape fraction
 
 
     
